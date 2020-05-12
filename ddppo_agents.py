@@ -86,8 +86,14 @@ class DDPPOAgent(Agent):
             action_space=action_space,
             hidden_size=self.hidden_size,
             normalize_visual_inputs="rgb" if config.INPUT_TYPE in ["rgb", "rgbd"] else False,
+            final_beta=None,
+            start_beta=None,
+            beta_decay_steps=None,
+            decay_start_step=None,
+            backbone="resnet18"
         )
         self.actor_critic.to(self.device)
+        self._encoder = self.actor_critic.net.visual_encoder
 
         if config.MODEL_PATH:
             ckpt = torch.load(config.MODEL_PATH, map_location=self.device)
@@ -110,6 +116,11 @@ class DDPPOAgent(Agent):
         self.not_done_masks = None
         self.prev_actions = None
 
+    def convertPolarToCartesian(self, coords):
+        rho = coords[0]
+        theta = -coords[1]
+        return np.array([rho * np.cos(theta), rho * np.sin(theta)], dtype=np.float32)
+
     def reset(self):
         self.test_recurrent_hidden_states = torch.zeros(
             self.actor_critic.net.num_recurrent_layers,
@@ -119,11 +130,20 @@ class DDPPOAgent(Agent):
         self.prev_actions = torch.zeros(
             1, 1, dtype=torch.long, device=self.device
         )
+        self.prev_visual_features = None
 
     def act(self, observations):
+        observations["pointgoal"] = self.convertPolarToCartesian(observations["pointgoal"])
         batch = batch_obs([observations], device=self.device)
+        batch["visual_features"] = self._encoder(batch)
+
+        if self.prev_visual_features == None:
+            batch["prev_visual_features"] = torch.zeros_like(batch["visual_features"])
+        else:
+            batch["prev_visual_features"] = self.prev_visual_features
 
         with torch.no_grad():
+            step_batch = batch
             _, action, _, self.test_recurrent_hidden_states = self.actor_critic.act(
                 batch,
                 self.test_recurrent_hidden_states,
@@ -134,7 +154,8 @@ class DDPPOAgent(Agent):
             #  Make masks not done till reset (end of episode) will be called
             self.not_done_masks.fill_(1.0)
             self.prev_actions.copy_(action)
-
+        
+        self.prev_visual_features = step_batch["visual_features"]
         return action.item()
 
 

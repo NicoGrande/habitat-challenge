@@ -1,4 +1,4 @@
-BASE_TASK_CONFIG_PATH: "configs/challenge_pointnav2020.local.rgbd.yaml"
+BASE_TASK_CONFIG_PATH: "configs/challenge_pointnav2020.local.rgbd_test_scene.yaml"
 TRAINER_NAME: "ddppo"
 ENV_NAME: "NavRLEnv"
 SIMULATOR_GPU_ID: 0
@@ -9,7 +9,7 @@ VIDEO_DIR: "video_dir"
 TEST_EPISODE_COUNT: -1
 EVAL_CKPT_PATH_DIR: "data/new_checkpoints"
 NUM_PROCESSES: 4
-SENSORS: ["RGB_SENSOR" , "DEPTH_SENSOR"]
+SENSORS: ["DEPTH_SENSOR"]
 CHECKPOINT_FOLDER: "data/new_checkpoints"
 NUM_UPDATES: 10000
 LOG_INTERVAL: 10
@@ -21,14 +21,14 @@ RL:
   PPO:
     # ppo params
     clip_param: 0.2
-    ppo_epoch: 2
+    ppo_epoch: 4
     num_mini_batch: 2
     value_loss_coef: 0.5
     entropy_coef: 0.01
     lr: 2.5e-4
     eps: 1e-5
-    max_grad_norm: 0.2
-    num_steps: 64
+    max_grad_norm: 0.5
+    num_steps: 96
     use_gae: True
     gamma: 0.99
     tau: 0.95
@@ -55,6 +55,6 @@ RL:
     reset_critic: True
 
     # Model parameters
-    backbone: resnet50
+    backbone: resnet18
     rnn_type: LSTM
     num_recurrent_layers: 2

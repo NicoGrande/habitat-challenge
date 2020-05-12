@@ -8,11 +8,12 @@ RUN /bin/bash -c ". activate habitat; git clone http://github.com/facebookresear
 
 ADD ddppo_agents.py agent.py
 ADD submission.sh submission.sh
+COPY habitat_baselines/ habitat-api/habitat_baselines/
 ADD configs/challenge_pointnav2020.local.rgbd.yaml /challenge_pointnav2020.local.rgbd.yaml
 ADD configs/ configs/
-ADD ddppo_pointnav_habitat2020_challenge_baseline_v1.pth demo.ckpt.pth
+ADD checkpoints/pointnav_via_ib.pth demo.ckpt.pth
 ENV AGENT_EVALUATION_TYPE remote
 
 ENV TRACK_CONFIG_FILE "/challenge_pointnav2020.local.rgbd.yaml"
 
-CMD ["/bin/bash", "-c", "source activate habitat && export PYTHONPATH=/evalai-remote-evaluation:$PYTHONPATH && export CHALLENGE_CONFIG_FILE=$TRACK_CONFIG_FILE && bash submission.sh --model-path demo.ckpt.pth --input-type rgbd"]
+CMD ["/bin/bash", "-c", "source activate habitat && export PYTHONPATH=/evalai-remote-evaluation:$PYTHONPATH && export CHALLENGE_CONFIG_FILE=$TRACK_CONFIG_FILE && bash submission.sh --model-path demo.ckpt.pth --input-type depth"]
