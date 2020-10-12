@@ -101,7 +101,8 @@ class DDPPOAgent(Agent):
             start_beta=None,
             beta_decay_steps=None,
             decay_start_step=None,
-            backbone="resnet18"
+            use_info_bot=False,
+            use_odometry=False,
         )
         if "ObjectNav" not in config.TASK_CONFIG.TASK.TYPE:
             policy_arguments["goal_sensor_uuid"] = config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID
@@ -136,6 +137,22 @@ class DDPPOAgent(Agent):
         theta = -coords[1]
         return np.array([rho * np.cos(theta), rho * np.sin(theta)], dtype=np.float32)
 
+    def convertMaxDepth(self, obs):
+        # min_depth = 0.1
+        # max_depth = 5
+        # obs = obs * (10 - 0.1) + 0.1
+
+        # if isinstance(obs, np.ndarray):
+        #     obs = np.clip(obs, min_depth, max_depth)
+        # else:
+        #     obs = obs.clamp(min_depth, max_depth)
+
+        # obs = (obs - min_depth) / (
+        #     max_depth - min_depth
+        # )
+
+        return obs  
+
     def reset(self):
         self.test_recurrent_hidden_states = torch.zeros(
             self.actor_critic.net.num_recurrent_layers,
@@ -149,6 +166,7 @@ class DDPPOAgent(Agent):
 
     def act(self, observations):
         observations["pointgoal"] = self.convertPolarToCartesian(observations["pointgoal"])
+        observations["depth"] = self.convertMaxDepth(observations["depth"])
         batch = batch_obs([observations], device=self.device)
         batch["visual_features"] = self._encoder(batch)
 
@@ -161,6 +179,7 @@ class DDPPOAgent(Agent):
             step_batch = batch
             _, action, _, self.test_recurrent_hidden_states = self.actor_critic.act(
                 batch,
+                None,
                 self.test_recurrent_hidden_states,
                 self.prev_actions,
                 self.not_done_masks,

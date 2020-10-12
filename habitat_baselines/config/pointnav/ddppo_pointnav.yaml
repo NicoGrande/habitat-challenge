@@ -30,7 +30,7 @@ RL:
     lr: 2.5e-4
     eps: 1e-5
     max_grad_norm: 0.5
-    num_steps: 96
+    num_steps: 128
     use_gae: True
     gamma: 0.99
     tau: 0.95
@@ -41,6 +41,9 @@ RL:
     start_beta: 1e-2
     beta_decay_steps: 2.5e7
     decay_start_step: 2.5e7
+    use_aux_losses: True
+    use_info_bot: True
+    use_odometry: False
 
     use_normalized_advantage: False
 
@@ -51,7 +54,7 @@ RL:
     # The PyTorch distributed backend to use
     distrib_backend: NCCL
     # Visual encoder backbone
-    pretrained_weights: data/ddppo-models/rs18-pointnav-v2-depth.pth
+    pretrained_weights: data/ddppo-models/rs18-gibson-v2-depth-with-noise-v3.pth
     # Initialize with pretrained weights
     pretrained: False
     # Initialize just the visual encoder backbone with pretrained weights

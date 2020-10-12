@@ -22,6 +22,7 @@ done
 docker run -v $(pwd)/habitat-challenge-data:/habitat-challenge-data \
     -v $(realpath habitat-challenge-data/data/scene_datasets/gibson):$(realpath habitat-challenge-data/data/scene_datasets/gibson) \
     --runtime=nvidia \
+    -e CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} \
     -e "AGENT_EVALUATION_TYPE=local" \
     -e "TRACK_CONFIG_FILE=/challenge_pointnav2020.local.rgbd.yaml" \
     ${DOCKER_NAME}\

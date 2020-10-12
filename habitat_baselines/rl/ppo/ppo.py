@@ -26,6 +26,7 @@ class PPO(nn.Module):
         num_mini_batch,
         value_loss_coef,
         entropy_coef,
+        use_aux_losses,
         lr=None,
         eps=None,
         max_grad_norm=None,
@@ -57,6 +58,7 @@ class PPO(nn.Module):
 
         self.reward_whitten = RunningMeanAndVar(shape=(1,))
         self.reward_whitten.to(self.device)
+        self.use_aux_losses = use_aux_losses
 
     def forward(self, *x):
         raise NotImplementedError
@@ -85,6 +87,7 @@ class PPO(nn.Module):
             for sample in data_generator:
                 (
                     obs_batch,
+                    prev_obs_batch,
                     recurrent_hidden_states_batch,
                     actions_batch,
                     prev_actions_batch,
@@ -103,6 +106,7 @@ class PPO(nn.Module):
                     dist_entropy,
                 ) = self.actor_critic.evaluate_actions(
                     obs_batch,
+                    prev_obs_batch,
                     recurrent_hidden_states_batch,
                     prev_actions_batch,
                     masks_batch,
@@ -136,10 +140,13 @@ class PPO(nn.Module):
                     - dist_entropy * self.entropy_coef
                 )
 
-                use_aux_loss = True
+                use_aux_loss = self.use_aux_losses
 
-                aux_losses = AuxLosses.reduce()
-                aux_losses = (1.0 if use_aux_loss else 0.0) * aux_losses
+                if use_aux_loss:
+                    aux_losses = AuxLosses.reduce()
+                else:
+                    aux_losses = AuxLosses.get_loss("information") * AuxLosses._loss_alphas["information"]
+
                 aux_losses_epoch += aux_losses.item()
 
                 total_loss = total_loss + aux_losses

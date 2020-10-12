@@ -74,7 +74,7 @@ def _subsampled_mean(x, p=0.2):
 
 
 class VIBLayer(nn.Module):
-    def __init__(self, state_size, output_size, beta=1e-6):
+    def __init__(self, state_size, output_size, use_info_bot=True, use_odometry=False, beta=1e-6):
         super().__init__()
 
         self.priv_embed = nn.Linear(3, 32)
@@ -87,10 +87,17 @@ class VIBLayer(nn.Module):
         )
         self.register_buffer("beta", torch.tensor(beta))
         self.output_size = output_size
+        self.use_info_bot = use_info_bot
+        self.use_odometry = use_odometry
 
     def forward(self, s, obs):
         if "pointgoal_with_gps" not in obs:
             return self.prior(s).sample()
+        
+        if self.use_odometry:
+            privileged_info = obs["pointgoal_with_gps_compass"]
+        else:
+            privileged_info = obs["pointgoal_with_gps"]
 
         mu, sigma = torch.chunk(
             self.encoder(
@@ -98,7 +105,7 @@ class VIBLayer(nn.Module):
                     [
                         s,
                         self.priv_embed(
-                            _to_mag_and_unit_vec(obs["pointgoal_with_gps"])
+                            _to_mag_and_unit_vec(privileged_info)
                         ),
                     ],
                     -1,
@@ -107,6 +114,11 @@ class VIBLayer(nn.Module):
             2,
             s.dim() - 1,
         )
+
+        if not self.use_info_bot:
+            mu.fill_(0.0)
+            sigma.fill_(1.0)
+
         sigma = F.softplus(sigma)
         dist = torch.distributions.Normal(mu, sigma)
 
@@ -123,10 +135,10 @@ class VIBLayer(nn.Module):
         if AuxLosses.is_active():
             AuxLosses.register_loss(
                 "information",
-                # _subsampled_mean(
-                #     torch.distributions.kl_divergence(dist, self.prior(s))
-                # ),
-                torch.distributions.kl_divergence(dist, self.prior(s)).mean(),
+                _subsampled_mean(
+                    torch.distributions.kl_divergence(dist, self.prior(s))
+                ),
+                # torch.distributions.kl_divergence(dist, self.prior(s)).mean(),
                 self.beta,
             )
 
@@ -140,8 +152,8 @@ class VIBLayer(nn.Module):
 
 
 class VIBCompleteLayer(VIBLayer):
-    def __init__(self, state_size, output_size, beta=1e-6):
-        super().__init__(state_size, output_size, beta)
+    def __init__(self, state_size, output_size, use_info_bot=True, use_odometry=False, beta=1e-6):
+        super().__init__(state_size, output_size, use_info_bot, use_odometry, beta)
 
         self.gps_head = nn.Sequential(
             nn.Linear(state_size, state_size // 2),
@@ -158,22 +170,35 @@ class VIBCompleteLayer(VIBLayer):
         self.combine_layer = nn.Sequential(
             nn.Linear(output_size * 2, output_size), nn.ReLU(True)
         )
+        
+        self.use_odometry = use_odometry
 
     def forward(self, s, obs):
         priv_emb = super().forward(s, obs)
 
         gps = self.gps_head(s)
         compass = self.compass_head(s)
-        pg = _update_pg_gps(obs["pointgoal"], gps)
+
+        if self.use_odometry:
+            pg = obs['pointgoal_with_egomotion_prediciton']
+        else:
+            pg = _update_pg_gps_compass(obs["pointgoal"], gps, compass)
 
         embed_pg = self.predicted_embed(_to_mag_and_unit_vec(pg.detach()))
 
         if AuxLosses.is_active():
-            AuxLosses.register_loss(
-                "egomotion_error",
-                torch.norm(pg - obs["pointgoal_with_gps"], dim=-1).mean(),
-                0.0,
-            )
+            if self.use_odometry:
+                AuxLosses.register_loss(
+                    "egomotion_error",
+                    torch.norm(pg - obs["pointgoal_with_gps_compass"], dim=-1).mean(),
+                    0.0,
+                )
+            else:
+                AuxLosses.register_loss(
+                    "egomotion_error",
+                    torch.norm(pg - obs["pointgoal_with_gps_compass"], dim=-1).mean(),
+                    0.0,
+                )
             AuxLosses.register_loss(
                 "compass_loss",
                 _subsampled_mean(_angular_distance_loss(compass, obs["compass"])),
@@ -189,8 +214,8 @@ class VIBCompleteLayer(VIBLayer):
 
 
 class VBBLayer(VIBLayer):
-    def __init__(self, state_size, privileged_size, output_size, beta=1e-6):
-        super().__init__(state_size, privileged_size, output_size, beta)
+    def __init__(self, state_size, privileged_size, output_size, use_info_bot=True, beta=1e-6):
+        super().__init__(state_size, privileged_size, output_size, use_info_bot, beta)
 
         self.channel_cap_network = nn.Sequential(
             nn.Linear(state_size, state_size // 2, bias=False),
@@ -247,7 +272,9 @@ class PointNavResNetPolicy(Policy):
         start_beta,
         beta_decay_steps,
         decay_start_step,
-        goal_sensor_uuid="pointgoal",
+        use_info_bot,
+        use_odometry,
+        goal_sensor_uuid="pointgoal_with_gps",
         hidden_size=512,
         num_recurrent_layers=2,
         rnn_type="LSTM",
@@ -266,6 +293,8 @@ class PointNavResNetPolicy(Policy):
                 backbone=backbone,
                 resnet_baseplanes=resnet_baseplanes,
                 normalize_visual_inputs=False,
+                use_info_bot=use_info_bot,
+                use_odometry=use_odometry,
             ),
             action_space.n,
         )
@@ -456,6 +485,8 @@ class PointNavResNetNet(Net):
         backbone,
         resnet_baseplanes,
         normalize_visual_inputs,
+        use_info_bot,
+        use_odometry,
     ):
         super().__init__()
         self.goal_sensor_uuid = goal_sensor_uuid
@@ -469,9 +500,11 @@ class PointNavResNetNet(Net):
         self._n_input_goal = 32
 
         self.ib = True
+        self.use_info_bot = use_info_bot
+        self.use_odometry = use_odometry
 
         if self.ib:
-            self.bottleneck = VIBCompleteLayer(self._hidden_size, self._n_input_goal)
+            self.bottleneck = VIBCompleteLayer(self._hidden_size, self._n_input_goal, self.use_info_bot, self.use_odometry)
 
         self.visual_encoder = ResNetEncoder(
             observation_space,
@@ -605,20 +638,61 @@ class PointNavResNetNet(Net):
     def get_tgt_encoding(self, observations, x):
         return self.bottleneck(x, observations)
 
-    def forward(self, observations, rnn_hidden_states, prev_actions, masks):
+    def forward(self, observations, prev_observations, rnn_hidden_states, prev_actions, masks):
         if AuxLosses.is_active():
             AuxLosses.obs = observations
 
+        depth_flag = False
+        rgb_flag = False
+
+        if "depth" in observations:
+            depth_flag = True
+        if "rgb" in observations:
+            rgb_flag = True
+
         if "visual_features" in observations:
             visual_features = observations["visual_features"]
+            prev_visual_features = observations["prev_visual_features"]
+        
+        elif masks.size(0) != rnn_hidden_states.size(1):
+            obs_input = {}
+            N = rnn_hidden_states.size(1)
+            T = masks.size(0) // N
+
+            if depth_flag:
+                prev_obs = prev_observations["depth"].view(T, N, *prev_observations["depth"].size()[1:])
+                obs = observations["depth"].view(T, N, *observations["depth"].size()[1:])
+                obs_input["depth"] = torch.cat((prev_obs[0:1], obs), dim=0)
+                obs_input["depth"] = obs_input["depth"].view((T + 1) * N, *obs_input["depth"].size()[2:])
+
+            if rgb_flag:
+                prev_obs = prev_observations["rgb"].view(T, N, *prev_observations["rgb"].size()[1:])
+                obs = observations["rgb"].view(T, N, *observations["rgb"].size()[1:])
+                obs_input["rgb"] = torch.cat((prev_obs[0:1], obs), dim=0)
+                obs_input["rgb"] = obs_input["rgb"].view((T + 1) * N, *obs_input["rgb"].size()[2:])
+
+            obs_features = self.visual_encoder(obs_input)
+            prev_visual_features = obs_features[:T*N, :, :, :]
+            visual_features = obs_features[-T*N:, :, :, :]
+                
         else:
-            visual_features = self.visual_encoder(observations)
+            obs_input = {}
+
+            if depth_flag:
+                obs_input["depth"] = torch.cat((prev_observations["depth"], observations["depth"]), dim=0)
+            if rgb_flag:
+                obs_input["rgb"] = torch.cat((prev_observations["rgb"], observations["rgb"]), dim=0)
+
+            obs_features = self.visual_encoder(obs_input)
+            prev_visual_features, visual_features = obs_features.split(obs_features.size()[0] // 2, dim=0)
 
         visual_features = self.compression(visual_features)
 
         visual_emb = self.visual_fc(visual_features)
+	
+	    # difference of frames (unit 1)
         flow_emb = self.visual_flow_encoder(
-            (visual_features - self.compression(observations["prev_visual_features"]))
+            (visual_features - self.compression(prev_visual_features))
             * masks.view(-1, 1, 1, 1)
         )
 

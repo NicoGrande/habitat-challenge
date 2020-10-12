@@ -11,7 +11,7 @@ ADD submission.sh submission.sh
 COPY habitat_baselines/ habitat-api/habitat_baselines/
 ADD configs/challenge_pointnav2020.local.rgbd.yaml /challenge_pointnav2020.local.rgbd.yaml
 ADD configs/ configs/
-ADD checkpoints/pointnav_via_ib.pth demo.ckpt.pth
+ADD checkpoints/ego_localization_v2.pth demo.ckpt.pth
 ENV AGENT_EVALUATION_TYPE remote
 
 ENV TRACK_CONFIG_FILE "/challenge_pointnav2020.local.rgbd.yaml"

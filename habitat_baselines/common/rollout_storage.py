@@ -24,9 +24,15 @@ class RolloutStorage:
         num_recurrent_layers=1,
     ):
         self.observations = {}
+        self.previous_observations = {}
 
         for sensor in observation_space.spaces:
             self.observations[sensor] = torch.zeros(
+                num_steps + 1,
+                num_envs,
+                *observation_space.spaces[sensor].shape
+            )
+            self.previous_observations[sensor] = torch.zeros(
                 num_steps + 1,
                 num_envs,
                 *observation_space.spaces[sensor].shape
@@ -63,6 +69,7 @@ class RolloutStorage:
     def to(self, device):
         for sensor in self.observations:
             self.observations[sensor] = self.observations[sensor].to(device)
+            self.previous_observations[sensor] = self.previous_observations[sensor].to(device)
 
         self.recurrent_hidden_states = self.recurrent_hidden_states.to(device)
         self.rewards = self.rewards.to(device)
@@ -84,9 +91,14 @@ class RolloutStorage:
         masks,
     ):
         for sensor in observations:
+            self.previous_observations[sensor][self.step + 1].copy_(
+                self.observations[sensor][self.step]
+            )
+
             self.observations[sensor][self.step + 1].copy_(
                 observations[sensor]
             )
+
         self.recurrent_hidden_states[self.step + 1].copy_(
             recurrent_hidden_states
         )
@@ -103,6 +115,9 @@ class RolloutStorage:
         for sensor in self.observations:
             self.observations[sensor][0].copy_(
                 self.observations[sensor][self.step]
+            )
+            self.previous_observations[sensor][0].copy_(
+                self.previous_observations[sensor][self.step]
             )
 
         self.recurrent_hidden_states[0].copy_(
@@ -143,6 +158,7 @@ class RolloutStorage:
         perm = torch.randperm(num_processes)
         for start_ind in range(0, num_processes, num_envs_per_batch):
             observations_batch = defaultdict(list)
+            prev_observations_batch = defaultdict(list)
 
             recurrent_hidden_states_batch = []
             actions_batch = []
@@ -159,6 +175,9 @@ class RolloutStorage:
                 for sensor in self.observations:
                     observations_batch[sensor].append(
                         self.observations[sensor][: self.step, ind]
+                    )
+                    prev_observations_batch[sensor].append(
+                        self.previous_observations[sensor][: self.step, ind]
                     )
 
                 recurrent_hidden_states_batch.append(
@@ -183,6 +202,9 @@ class RolloutStorage:
                 observations_batch[sensor] = torch.stack(
                     observations_batch[sensor], 1
                 )
+                prev_observations_batch[sensor] = torch.stack(
+                    prev_observations_batch[sensor], 1
+                )
 
             actions_batch = torch.stack(actions_batch, 1)
             prev_actions_batch = torch.stack(prev_actions_batch, 1)
@@ -204,6 +226,9 @@ class RolloutStorage:
                 observations_batch[sensor] = self._flatten_helper(
                     T, N, observations_batch[sensor]
                 )
+                prev_observations_batch[sensor] = self._flatten_helper(
+                    T, N, prev_observations_batch[sensor]
+                )
 
             actions_batch = self._flatten_helper(T, N, actions_batch)
             prev_actions_batch = self._flatten_helper(T, N, prev_actions_batch)
@@ -217,6 +242,7 @@ class RolloutStorage:
 
             yield (
                 observations_batch,
+                prev_observations_batch,
                 recurrent_hidden_states_batch,
                 actions_batch,
                 prev_actions_batch,

@@ -41,10 +41,10 @@ class Policy(nn.Module):
         raise NotImplementedError
 
     def act(
-        self, observations, rnn_hidden_states, prev_actions, masks, deterministic=False
+        self, observations, prev_observations, rnn_hidden_states, prev_actions, masks, deterministic=False
     ):
         features, rnn_hidden_states = self.net(
-            observations, rnn_hidden_states, prev_actions, masks
+            observations, prev_observations, rnn_hidden_states, prev_actions, masks
         )
 
         value = self.critic(features)
@@ -81,14 +81,14 @@ class Policy(nn.Module):
 
         return value, action, action_log_probs, rnn_hidden_states
 
-    def get_value(self, observations, rnn_hidden_states, prev_actions, masks):
-        features, _ = self.net(observations, rnn_hidden_states, prev_actions, masks)
+    def get_value(self, observations, prev_observations, rnn_hidden_states, prev_actions, masks):
+        features, _ = self.net(observations, prev_observations, rnn_hidden_states, prev_actions, masks)
         return self.critic(features)
 
     def evaluate_actions(
-        self, observations, rnn_hidden_states, prev_actions, masks, action
+        self, observations, prev_observations, rnn_hidden_states, prev_actions, masks, action
     ):
-        features, _ = self.net(observations, rnn_hidden_states, prev_actions, masks)
+        features, _ = self.net(observations, prev_observations, rnn_hidden_states, prev_actions, masks)
         value = self.critic(features)
 
         if self.supervise_stop:

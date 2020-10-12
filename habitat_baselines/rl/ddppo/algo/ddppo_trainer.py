@@ -77,6 +77,8 @@ class DDPPOTrainer(PPOTrainer):
             start_beta=ppo_cfg.start_beta,
             beta_decay_steps=ppo_cfg.beta_decay_steps,
             decay_start_step=ppo_cfg.decay_start_step,
+            use_info_bot=ppo_cfg.use_info_bot,
+            use_odometry=ppo_cfg.use_odometry,
             hidden_size=ppo_cfg.hidden_size,
             rnn_type=self.config.RL.DDPPO.rnn_type,
             num_recurrent_layers=self.config.RL.DDPPO.num_recurrent_layers,
@@ -132,6 +134,7 @@ class DDPPOTrainer(PPOTrainer):
             eps=ppo_cfg.eps,
             max_grad_norm=ppo_cfg.max_grad_norm,
             use_normalized_advantage=ppo_cfg.use_normalized_advantage,
+            use_aux_losses=ppo_cfg.use_aux_losses,
         )
 
     def train(self) -> None:
@@ -157,6 +160,7 @@ class DDPPOTrainer(PPOTrainer):
         self.config.defrost()
         self.config.TORCH_GPU_ID = self.local_rank
         self.config.SIMULATOR_GPU_ID = self.local_rank
+        self.config.TASK_CONFIG.TASK.POINTGOAL_WITH_EGO_PREDICTION_SENSOR.MODEL.GPU_ID = self.local_rank
         # Multiply by the number of simulators to make sure they also get unique seeds
         self.config.TASK_CONFIG.SEED += (
             self.world_rank * self.config.NUM_PROCESSES
@@ -174,7 +178,9 @@ class DDPPOTrainer(PPOTrainer):
             self.device = torch.device("cpu")
 
         self.envs = construct_envs(
-            self.config, get_env_class(self.config.ENV_NAME)
+            self.config,
+            get_env_class(self.config.ENV_NAME),
+            workers_ignore_signals=True,
         )
 
         ppo_cfg = self.config.RL.PPO
@@ -237,6 +243,7 @@ class DDPPOTrainer(PPOTrainer):
 
         for sensor in rollouts.observations:
             rollouts.observations[sensor][0].copy_(batch[sensor])
+            rollouts.previous_observations[sensor][0].copy_(torch.zeros_like(batch[sensor]))
 
         # batch and observations may contain shared PyTorch CUDA
         # tensors.  We must explicitly clear them here otherwise
@@ -295,6 +302,8 @@ class DDPPOTrainer(PPOTrainer):
                 if ppo_cfg.use_linear_lr_decay:
                     lr_scheduler.step()
 
+                self.actor_critic.update_ib_beta(count_steps)
+                
                 if ppo_cfg.use_linear_clip_decay:
                     self.agent.clip_param = ppo_cfg.clip_param * linear_decay(
                         update, self.config.NUM_UPDATES
@@ -394,8 +403,8 @@ class DDPPOTrainer(PPOTrainer):
                     num_rollouts_done_store.set("num_done", "0")
 
                     losses = [
-                        stats[0].item() / self.world_size,
-                        stats[1].item() / self.world_size,
+                        stats[i].item() / self.world_size
+                        for i in range(stats.size(0) - 1)
                     ]
                     deltas = {
                         k: (
@@ -464,6 +473,26 @@ class DDPPOTrainer(PPOTrainer):
                             f"ckpt.{count_checkpoints}.pth",
                             dict(step=count_steps),
                         )
+
+                        requeue_stats = dict(
+                            env_time=env_time,
+                            pth_time=pth_time,
+                            count_steps=count_steps,
+                            count_checkpoints=count_checkpoints,
+                            start_update=update,
+                            prev_time=(time.time() - t_start) + prev_time,
+                        )
+
+                        save_interrupted_state(
+                            dict(
+                                state_dict=self.agent.state_dict(),
+                                optim_state=self.agent.optimizer.state_dict(),
+                                lr_sched_state=lr_scheduler.state_dict(),
+                                config=self.config,
+                                requeue_stats=requeue_stats,
+                            )
+                        )
+
                         count_checkpoints += 1
 
             self.envs.close()
