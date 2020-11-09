@@ -131,6 +131,7 @@ class DDPPOAgent(Agent):
         self.test_recurrent_hidden_states = None
         self.not_done_masks = None
         self.prev_actions = None
+        self.final_action = False
 
     def convertPolarToCartesian(self, coords):
         rho = coords[0]
@@ -163,6 +164,7 @@ class DDPPOAgent(Agent):
             1, 1, dtype=torch.long, device=self.device
         )
         self.prev_visual_features = None
+        self.final_action = False
 
     def act(self, observations):
         observations["pointgoal"] = self.convertPolarToCartesian(observations["pointgoal"])
@@ -190,6 +192,14 @@ class DDPPOAgent(Agent):
             self.prev_actions.copy_(action)
         
         self.prev_visual_features = step_batch["visual_features"]
+
+        # if self.final_action:
+        #     return 0
+        
+        # if action.item() == 0:
+        #     self.final_action = True
+        #     return 1
+
         return action.item()
 
 
